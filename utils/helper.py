@@ -80,8 +80,7 @@ async def load_contract(address, web3, abi_name) -> Contract | None:
 
 
 async def load_abi(name: str) -> str:
-    dir_path = os.path.dirname(os.path.realpath(__file__))
-    file_name = dir_path + f'/abis/{name}.json'
+    file_name = os.path.join(os.getcwd(), f'utils/abis/{name}.json')
     with open(file_name) as f:
         abi: str = json.load(f)
     return abi
