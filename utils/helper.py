@@ -1,7 +1,6 @@
 from web3.contract import Contract
 from eth_typing import Address
 from eth_typing import HexStr
-from swapper_config import tokens
 import asyncio
 import random
 import json
@@ -11,20 +10,14 @@ from web3 import Web3
 import os
 
 
-async def setup_tokens_addresses(from_token: str, to_token: str) -> tuple[str, str]:
-    to_token_address, from_token_address = tokens[to_token.upper()], tokens[from_token.upper()]
-    return to_token_address, from_token_address
-
-
-async def setup_for_liq(token: str) -> tuple[str, str]:
-    if token.lower() == 'usdc':
-        from_token_address = tokens[token.upper()]
-        to_token_address = tokens['ETH']
-    else:
-        from_token_address = tokens[token.upper()]
-        to_token_address = tokens['USDC']
-
-    return to_token_address, from_token_address
+async def setup_tokens_addresses(token1_symbol: str, token2_symbol: str, tokens: dict[str, str]) \
+        -> tuple[str, str] | None:
+    token1_symbol, token2_symbol = token1_symbol.upper(), token2_symbol.upper()
+    if not (token1_symbol in tokens and token2_symbol in tokens):
+        logger.error(f"No addresses found for such tokens")
+        return None
+    token1_address, token2_address = tokens[token1_symbol], tokens[token2_symbol]
+    return token1_address, token2_address
 
 
 async def setup_transaction_data(web3: Web3, from_token_address: str, to_token_address: str) -> tuple[str, int, str]:
@@ -53,9 +46,9 @@ async def check_data_token(web3: Web3, from_token_address: str) -> int:
         logger.error(f'Something went wrong | {ex}')
 
 
-async def create_amount(token: str, web3: Web3, token_contract, amount: float) -> tuple[float, Contract | None]:
+async def create_amount(token: str, web3: Web3, token_address, amount: float) -> tuple[float, Contract | None]:
     if token.lower() != 'eth':
-        stable_contract = await load_contract(token_contract, web3, 'erc20')
+        stable_contract = await load_contract(token_address, web3, 'erc20')
 
         if token.lower() == 'usdc' or token.lower() == 'usdt':
             amount = amount * 10 ** 6
@@ -65,7 +58,7 @@ async def create_amount(token: str, web3: Web3, token_contract, amount: float) -
             return amount, stable_contract
 
     else:
-        stable_contract = await load_contract(token_contract, web3, 'erc20')
+        stable_contract = await load_contract(token_address, web3, 'erc20')
         amount = amount * 10 ** 18
 
     return amount, stable_contract
@@ -100,17 +93,26 @@ async def get_wallet_balance(token: str, w3: Web3, address: Address, stable_cont
         return balance
 
 
-async def approve_token(amount: float, private_key: str, chain: str, from_token_address: str, spender: str,
-                        address_wallet: Address, web3: Web3) -> HexStr:
+async def approve_token(
+        amount: float,
+        private_key: str,
+        chain: str,
+        from_token_address: str,
+        from_token_symbol: str,
+        spender: str,
+        address_wallet: Address,
+        web3: Web3
+        ) -> HexStr:
     try:
         spender = web3.to_checksum_address(spender)
         contract = await get_contract(web3, from_token_address)
         allowance_amount = await check_allowance(web3, from_token_address, address_wallet, spender)
+        diff = amount - allowance_amount
 
-        if amount > allowance_amount:
+        if diff > 0:
             tx = contract.functions.approve(
                 spender,
-                amount - allowance_amount
+                amount
             ).build_transaction(
                 {
                     'chainId': web3.eth.chain_id,
@@ -137,7 +139,8 @@ async def approve_token(amount: float, private_key: str, chain: str, from_token_
                 await asyncio.sleep(1)
                 tx_receipt = web3.eth.get_transaction_receipt(raw_tx_hash)
             tx_hash = web3.to_hex(raw_tx_hash)
-            logger.info(f'Token approved | Tx hash: {tx_hash}')
+            logger.info(f'{amount} {from_token_symbol} approved for {address_wallet} wallet | Tx '
+                        f'hash: {tx_hash}')
             await asyncio.sleep(5)
             return tx_hash
 
@@ -176,23 +179,3 @@ async def get_contract(web3: Web3, from_token_address: str) -> Contract:
     return web3.eth.contract(address=web3.to_checksum_address(from_token_address),
                              abi=await load_abi('erc20'))
 
-
-async def decimal_to_int(qty, decimal) -> float:
-    return qty / int("".join((["1"] + ["0"] * decimal)))
-
-
-async def int_to_decimal(amount: float, from_decimals: int) -> int:
-    return int(amount * int("".join(["1"] + ["0"] * from_decimals)))
-
-
-async def round_to(num, digits=3):
-    try:
-        if num == 0:
-            return 0
-        scale = int(-math.floor(math.log10(abs(num - int(num))))) + digits - 1
-        if scale < digits:
-            scale = digits
-        return round(num, scale)
-    except Exception as ex:
-        logger.error(ex)
-        return num
