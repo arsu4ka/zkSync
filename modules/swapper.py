@@ -39,6 +39,40 @@ class Swapper:
         import time
         return int(time.time() + datetime.timedelta(minutes=self.deadline_minutes).total_seconds())
 
+    async def calc_slippage(self, value: int) -> int:
+        return int(value * (1 - (self.slippage / 100)))
+
+    async def get_amount_out_min(
+            self,
+            from_token_symbol: str,
+            to_token_symbol: str,
+            from_token_amount: float,
+            to_token_address: str
+    ) -> int:
+        from_token_ticker = f"\"{from_token_symbol}USDT\""
+        to_token_ticker = f"\"{to_token_symbol}USDT\""
+        data = await Swapper.send_requests(
+            "https://api.binance.com/api/v3/ticker/price",
+            {"symbols": "[" + from_token_ticker + "," + to_token_ticker + "]"}
+        )
+        try:
+            prices = {
+                item["symbol"].replace("USDT", ""): float(item["price"])
+                for item in data
+                if "price" in item
+            }
+            to_token_amount = (from_token_amount * prices[from_token_symbol]) / prices[to_token_symbol]
+            to_token_amount_wei, _ = await create_amount(
+                to_token_symbol,
+                self.web3,
+                to_token_address,
+                to_token_amount
+            )
+            return await self.calc_slippage(int(to_token_amount_wei))
+        except:
+            return 0
+
+
     @staticmethod
     async def send_requests(url: str, params=None) -> json:
         if params is None:
@@ -87,7 +121,12 @@ class Swapper:
 
         if from_token_symbol.lower() == 'eth':
             tx = mute_contract.functions.swapExactETHForTokensSupportingFeeOnTransferTokens(
-                0,
+                await self.get_amount_out_min(
+                    from_token_symbol,
+                    to_token_symbol,
+                    amount,
+                    to_token_address
+                ),
                 [Web3.to_checksum_address(from_token_address), Web3.to_checksum_address(to_token_address)],
                 self.address_wallet,
                 await self.get_deadline(),
@@ -103,7 +142,12 @@ class Swapper:
         elif to_token_symbol.lower() == "eth":
             tx = mute_contract.functions.swapExactTokensForETHSupportingFeeOnTransferTokens(
                 value,
-                0, ### fix
+                await self.get_amount_out_min(
+                    from_token_symbol,
+                    to_token_symbol,
+                    amount,
+                    to_token_address
+                ), ### fix
                 [Web3.to_checksum_address(from_token_address), Web3.to_checksum_address(to_token_address)],
                 self.address_wallet,
                 await self.get_deadline(),
@@ -119,7 +163,12 @@ class Swapper:
         else:
             tx = mute_contract.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(
                 value,
-                1,
+                await self.get_amount_out_min(
+                    from_token_symbol,
+                    to_token_symbol,
+                    amount,
+                    to_token_address
+                ),
                 [Web3.to_checksum_address(from_token_address), Web3.to_checksum_address(to_token_address)],
                 self.address_wallet,
                 await self.get_deadline(),
@@ -188,8 +237,6 @@ class Swapper:
                 "fromAddress": self.address_wallet,
                 "slippage": self.slippage
             })
-        from_token = response['fromToken']['symbol']
-        to_token = response['toToken']['symbol']
         to_token_decimals = response['toToken']['decimals']
         to_token_amount = float(response['toTokenAmount']) / 10 ** to_token_decimals
         tx = response['tx']
@@ -282,7 +329,12 @@ class Swapper:
 
         tx = router.functions.swap(
             paths,
-            Web3.to_wei(0.45, "ether") // 1000000000000, ### fix
+            await self.get_amount_out_min(
+                from_token_symbol,
+                to_token_symbol,
+                amount,
+                to_token_address
+            ), ### fix
             await self.get_deadline()
         ).build_transaction({
             'from': self.address_wallet,
