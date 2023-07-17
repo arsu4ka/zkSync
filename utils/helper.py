@@ -4,10 +4,21 @@ from eth_typing import HexStr
 import asyncio
 import random
 import json
-import math
+from hexbytes import HexBytes
 from loguru import logger
 from web3 import Web3
 import os
+
+
+async def get_nft_id(web3: Web3, tx_hash: str) -> int:
+    logs = web3.eth.get_transaction_receipt(HexBytes(tx_hash)).logs
+
+    for log in logs:
+        if 'topics' in log and len(log['topics']) > 3:
+            topic = log['topics'][3]
+            if isinstance(topic, HexBytes):
+                nft_id = int(topic.hex(), 16)
+                return nft_id
 
 
 async def setup_tokens_addresses(token1_symbol: str, token2_symbol: str, tokens: dict[str, str]) \
@@ -178,4 +189,3 @@ async def add_gas_limit(web3: Web3, tx: dict) -> int:
 async def get_contract(web3: Web3, from_token_address: str) -> Contract:
     return web3.eth.contract(address=web3.to_checksum_address(from_token_address),
                              abi=await load_abi('erc20'))
-
