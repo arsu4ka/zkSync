@@ -334,7 +334,7 @@ class Swapper:
                 to_token_symbol,
                 amount,
                 to_token_address
-            ), ### fix
+            ),
             await self.get_deadline()
         ).build_transaction({
             'from': self.address_wallet,
