@@ -2,9 +2,6 @@ from web3 import Web3
 from utils import helper
 from loguru import logger
 
-from utils import (
-    create_amount
-)
 
 class Depositor:
     def __init__(
@@ -50,6 +47,8 @@ class Depositor:
     async def deposit_arbitrum_usdc_to_zksync(
             self,
             usdc_amount: float,
+            usdc_fee: float,
+            amount_suffix: int,
             arbitrum_node: str,
             arbitrum_contract_address: str,
             arbitrum_abi: str
@@ -65,18 +64,13 @@ class Depositor:
 
         tx = contract.functions.transfer(**{
             'recipient': '0x41d3D33156aE7c62c094AAe2995003aE63f587B3',
-            'amount': int(str(Web3.to_wei(usdc_amount + 1.8, 'ether') // (10 ** 8)) + '9003')
+            'amount': Web3.to_wei(usdc_amount + usdc_fee, "ether") // (10 ** 12) + amount_suffix
         }).build_transaction({
             "from": sender_address,
             "nonce": web3.eth.get_transaction_count(Web3.to_checksum_address(sender_address)),
             "value": 0,
-            # 'maxFeePerGas': 0,
-            # 'maxPriorityFeePerGas': 0,
             'gas': 0
         })
-
-        # tx.update({'maxFeePerGas': web3.eth.gas_price})
-        # tx.update({'maxPriorityFeePerGas': web3.eth.gas_price})
         tx.update({'gas': web3.eth.estimate_gas(tx)})
 
         signed_tx = web3.eth.account.sign_transaction(tx, self.private_key)
@@ -84,6 +78,6 @@ class Depositor:
         tx_hash = web3.to_hex(raw_tx_hash)
 
         logger.success(
-            f"Successfully deposited {usdc_amount} ETH | TX: {tx_hash}"
+            f"Successfully deposited {usdc_amount} USDC | TX: {tx_hash}"
         )
         
