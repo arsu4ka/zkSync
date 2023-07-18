@@ -119,14 +119,15 @@ class Swapper:
                                 address_wallet=self.address_wallet,
                                 web3=self.web3)
 
-        if from_token_symbol.lower() == 'eth':
-            tx = mute_contract.functions.swapExactETHForTokensSupportingFeeOnTransferTokens(
-                await self.get_amount_out_min(
+        amount_out_min = await self.get_amount_out_min(
                     from_token_symbol,
                     to_token_symbol,
                     amount,
                     to_token_address
-                ),
+                )
+        if from_token_symbol.lower() == 'eth':
+            tx = mute_contract.functions.swapExactETHForTokensSupportingFeeOnTransferTokens(
+                amount_out_min,
                 [Web3.to_checksum_address(from_token_address), Web3.to_checksum_address(to_token_address)],
                 self.address_wallet,
                 await self.get_deadline(),
@@ -142,12 +143,7 @@ class Swapper:
         elif to_token_symbol.lower() == "eth":
             tx = mute_contract.functions.swapExactTokensForETHSupportingFeeOnTransferTokens(
                 value,
-                await self.get_amount_out_min(
-                    from_token_symbol,
-                    to_token_symbol,
-                    amount,
-                    to_token_address
-                ), ### fix
+                amount_out_min,
                 [Web3.to_checksum_address(from_token_address), Web3.to_checksum_address(to_token_address)],
                 self.address_wallet,
                 await self.get_deadline(),
@@ -163,12 +159,7 @@ class Swapper:
         else:
             tx = mute_contract.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(
                 value,
-                await self.get_amount_out_min(
-                    from_token_symbol,
-                    to_token_symbol,
-                    amount,
-                    to_token_address
-                ),
+                amount_out_min,
                 [Web3.to_checksum_address(from_token_address), Web3.to_checksum_address(to_token_address)],
                 self.address_wallet,
                 await self.get_deadline(),
