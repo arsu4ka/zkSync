@@ -4,10 +4,7 @@ from web3 import Web3
 from hexbytes import HexBytes
 from asyncio import sleep
 
-from utils import (
-    load_contract,
-    get_nft_id
-)
+import utils
 
 
 class MintBridge:
@@ -29,10 +26,10 @@ class MintBridge:
         self.abi_name = abi_name
 
     async def mint(self) -> None:
-        contract = await load_contract(self.contract_address, self.web3, self.abi_name)
+        contract = await utils.get_contract(self.contract_address, self.web3, self.abi_name)
         tx = contract.functions.mint().build_transaction({
             'from': self.address_wallet,
-            'value': self.web3.to_wei(0.0005, 'ether'), ###
+            'value': self.web3.to_wei(0.0005, 'ether'),
             'nonce': self.nonce,
             'maxFeePerGas': 0,
             'maxPriorityFeePerGas': 0,
@@ -52,7 +49,7 @@ class MintBridge:
         self.nonce += 1
         await sleep(5)
 
-        nft_id = await get_nft_id(self.web3, tx_hash)
+        nft_id = await utils.get_nft_id(self.web3, tx_hash)
         await self.bridge(nft_id, contract)
 
     async def bridge(self, nft_id: int, contract: Contract) -> None:

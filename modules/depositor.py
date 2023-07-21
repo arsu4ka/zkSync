@@ -1,5 +1,5 @@
 from web3 import Web3
-from utils import helper
+import utils
 from loguru import logger
 
 
@@ -20,7 +20,7 @@ class Depositor:
         web3 = Web3(Web3.HTTPProvider(eth_node))
         account = web3.eth.account.from_key(self.private_key)
         sender_address = account.address
-        contract = await helper.load_contract(
+        contract = await utils.get_contract(
             contract_address,
             web3,
             contract_abi_name
@@ -56,7 +56,7 @@ class Depositor:
         web3 = Web3(Web3.HTTPProvider(arbitrum_node))
         account = web3.eth.account.from_key(self.private_key)
         sender_address = account.address
-        contract = await helper.load_contract(
+        contract = await utils.get_contract(
             arbitrum_contract_address,
             web3,
             arbitrum_abi

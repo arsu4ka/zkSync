@@ -4,12 +4,7 @@ from eth_account.signers.local import LocalAccount
 from loguru import logger
 from web3 import Web3
 
-from utils.helper import (
-    approve_token,
-    create_amount,
-    get_wallet_balance,
-    load_contract,
-)
+import utils
 
 
 class Staker:
@@ -119,7 +114,7 @@ class Staker:
         ###
 
         ### Getting router contract
-        router_contract = await load_contract(
+        router_contract = await utils.get_contract(
             address=Web3.to_checksum_address(router_address),
             web3=self.web3,
             abi_name=router_abi
@@ -127,24 +122,20 @@ class Staker:
         ###
 
         ### Verifying TOKEN1 balance
-        token1_amount_wei, token1_contract = await create_amount(token1_symbol, self.web3, token1_address,
-                                                                 token1_amount)
-        token1_amount_wei = int(token1_amount_wei)
-        token1_balance = await get_wallet_balance(token1_symbol, self.web3, self.address_wallet, token1_contract,
-                                                  "ERA")
-        if token1_amount_wei > token1_balance:
-            logger.error(f'Not enough {token1_symbol} on wallet {self.address_wallet}')
+        token1_amount_wei = await utils.amount_to_wei(self.web3, token1_amount, token1_address)
+        token1_balance = await utils.get_wallet_balance(self.web3, self.address_wallet, token1_address)
+        if token1_amount > token1_balance:
+            logger.error(f'Not enough {token1_symbol} on wallet {self.address_wallet}. Want {token1_amount},'
+                         f' have {token1_balance}')
             return
         ###
 
         ### Verifying TOKEN2 balance
-        token2_amount_wei, token2_contract = await create_amount(token2_symbol, self.web3, token2_address,
-                                                                 token2_amount)
-        token2_amount_wei = int(token2_amount_wei)
-        token2_balance = await get_wallet_balance(token2_symbol, self.web3, self.address_wallet, token2_contract,
-                                                  "ERA")
-        if token2_amount_wei > token2_balance:
-            logger.error(f'Not enough {token2_symbol} on wallet {self.address_wallet}')
+        token2_amount_wei = await utils.amount_to_wei(self.web3, token2_amount, token2_address)
+        token2_balance = await utils.get_wallet_balance(self.web3, self.address_wallet, token2_address)
+        if token2_amount > token2_balance:
+            logger.error(f'Not enough {token2_symbol} on wallet {self.address_wallet}. Want {token2_amount}, '
+                         f'have {token2_balance}')
             return
         ###
 
@@ -152,28 +143,26 @@ class Staker:
 
         ### Approving TOKEN1
         if token1_symbol != "ETH":
-            await approve_token(
+            await utils.approve_token(
                 amount=token1_amount_wei,
                 private_key=self.private_key,
                 chain="ERA",
                 from_token_address=token1_address,
                 from_token_symbol=token1_symbol,
                 spender=router_address,
-                address_wallet=self.address_wallet,
                 web3=self.web3
             )
         ###
 
         ### Approving TOKEN2
         if token2_symbol != "ETH":
-            await approve_token(
+            await utils.approve_token(
                 amount=token2_amount_wei,
                 private_key=self.private_key,
                 chain="ERA",
                 from_token_address=token2_address,
                 from_token_symbol=token2_symbol,
                 spender=router_address,
-                address_wallet=self.address_wallet,
                 web3=self.web3
             )
         ###
@@ -241,7 +230,7 @@ class Staker:
 
         ### Getting pool data and router contract details
         pool_data = await Staker.kyber_swap_pool_data(pool_address)
-        router_contract = await load_contract(router_address, self.web3, abi_file_name)
+        router_contract = await utils.get_contract(router_address, self.web3, abi_file_name)
         ###
 
         ### Retrieving tokens addresses
@@ -256,52 +245,46 @@ class Staker:
         ###
 
         ### Verifying TOKEN1 balance
-        token1_amount_wei, token1_contract = await create_amount(token1_symbol, self.web3, token1_address,
-                                                                 token1_amount)
-        token1_amount_wei = int(token1_amount_wei)
-        token1_balance = await get_wallet_balance(token1_symbol, self.web3, self.address_wallet, token1_contract,
-                                                  "ERA")
-        if token1_amount_wei > token1_balance:
-            logger.error(f'Not enough {token1_symbol} on wallet {self.address_wallet}')
+        token1_amount_wei = await utils.amount_to_wei(self.web3, token1_amount, token1_address)
+        token1_balance = await utils.get_wallet_balance(self.web3, self.address_wallet, token1_address)
+        if token1_amount > token1_balance:
+            logger.error(f'Not enough {token1_symbol} on wallet {self.address_wallet}. Want {token1_amount},'
+                         f' have {token1_balance}')
             return
         ###
 
         ### Verifying TOKEN2 balance
         token2_amount = await Staker.get_relative_amount(token1_amount, pool_data["reserve0"], pool_data["reserve1"])
-        token2_amount_wei, token2_contract = await create_amount(token2_symbol, self.web3, token2_address,
-                                                                 token2_amount)
-        token2_amount_wei = int(token2_amount_wei)
-        token2_balance = await get_wallet_balance(token2_symbol, self.web3, self.address_wallet, token2_contract,
-                                                  "ERA")
-        if token2_amount_wei > token2_balance:
-            logger.error(f'Not enough {token2_symbol} on wallet {self.address_wallet}')
+        token2_amount_wei = await utils.amount_to_wei(self.web3, token2_amount, token2_address)
+        token2_balance = await utils.get_wallet_balance(self.web3, self.address_wallet, token2_address)
+        if token2_amount > token2_balance:
+            logger.error(f'Not enough {token2_symbol} on wallet {self.address_wallet}. Want {token2_amount}, '
+                         f'have {token2_balance}')
             return
         ###
 
         ### Approving TOKEN1
         if token1_symbol != "ETH":
-            await approve_token(
+            await utils.approve_token(
                 amount=token1_amount_wei,
                 private_key=self.private_key,
                 chain="ERA",
                 from_token_address=token1_address,
                 from_token_symbol=token1_symbol,
                 spender=router_address,
-                address_wallet=self.address_wallet,
                 web3=self.web3
             )
         ###
 
         ### Approving TOKEN2
         if token2_symbol != "ETH":
-            await approve_token(
+            await utils.approve_token(
                 amount=token2_amount_wei,
                 private_key=self.private_key,
                 chain="ERA",
                 from_token_address=token2_address,
                 from_token_symbol=token2_symbol,
                 spender=router_address,
-                address_wallet=self.address_wallet,
                 web3=self.web3
             )
         ###

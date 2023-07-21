@@ -3,16 +3,7 @@ from loguru import logger
 from web3 import Web3
 from eth_abi import encode
 import json
-
-from utils.helper import (
-    approve_token,
-    setup_transaction_data,
-    setup_tokens_addresses,
-    load_abi,
-    create_amount,
-    get_wallet_balance,
-    load_contract
-)
+import utils
 
 
 class Swapper:
@@ -29,9 +20,8 @@ class Swapper:
         self.chain, self.chain_id = chain["name"], chain["id"]
         self.slippage = slippage
         self.deadline_minutes = deadline
-        self.account = self.web3.eth.account.from_key(private_key)
-        self.address_wallet = self.account.address
-        self.nonce = self.web3.eth.get_transaction_count(self.address_wallet)
+        self.address_wallet = utils.get_wallet_address_from_private_key(self.web3, private_key)
+        self.nonce = self.web3.eth.get_transaction_count(self.web3.to_checksum_address(self.address_wallet))
         self.tokens = tokens
 
     async def get_deadline(self) -> int:
@@ -62,16 +52,10 @@ class Swapper:
                 if "price" in item
             }
             to_token_amount = (from_token_amount * prices[from_token_symbol]) / prices[to_token_symbol]
-            to_token_amount_wei, _ = await create_amount(
-                to_token_symbol,
-                self.web3,
-                to_token_address,
-                to_token_amount
-            )
+            to_token_amount_wei = await utils.amount_to_wei(self.web3, to_token_amount, to_token_address)
             return await self.calc_slippage(int(to_token_amount_wei))
-        except:
+        except KeyError:
             return 0
-
 
     @staticmethod
     async def send_requests(url: str, params=None) -> json:
@@ -92,32 +76,32 @@ class Swapper:
     ) -> None:
         from_token_symbol = from_token_symbol.upper()
         to_token_symbol = to_token_symbol.upper()
-        from_token_address, to_token_address = await setup_tokens_addresses(
+        from_token_address, to_token_address = await utils.setup_tokens_addresses(
             token1_symbol=from_token_symbol,
             token2_symbol=to_token_symbol,
             tokens=self.tokens
         )
-        mute_contract = self.web3.eth.contract(
-            address=Web3.to_checksum_address(mute_contract_address),
-            abi=await load_abi(mute_abi_name))
 
-        value, token_contract = await create_amount(from_token_symbol, self.web3, from_token_address, amount)
-        value = int(value)
+        mute_contract = await utils.get_contract(mute_contract_address, self.web3, mute_abi_name)
 
-        balance = await get_wallet_balance(from_token_symbol, self.web3, self.address_wallet, token_contract, 'ERA')
+        amount_wei = await utils.amount_to_wei(self.web3, amount, from_token_address)
+        balance = await utils.get_wallet_balance(self.web3, self.address_wallet, from_token_address)
 
-        if value > balance:
-            raise Exception(f'Not enough balance for wallet {self.address_wallet}')
+        if amount > balance:
+            logger.error(
+                f'Not enough {from_token_symbol} on wallet {self.address_wallet}. Want {amount}, got {balance}')
+            return
 
         if from_token_symbol.lower() != 'eth':
-            await approve_token(amount=value,
+            await utils.approve_token(
+                                amount=amount_wei,
                                 private_key=self.private_key,
                                 chain='ERA',
                                 from_token_address=from_token_address,
                                 from_token_symbol=from_token_symbol,
                                 spender=mute_contract_address,
-                                address_wallet=self.address_wallet,
-                                web3=self.web3)
+                                web3=self.web3
+            )
 
         amount_out_min = await self.get_amount_out_min(
                     from_token_symbol,
@@ -125,59 +109,26 @@ class Swapper:
                     amount,
                     to_token_address
                 )
-        if from_token_symbol.lower() == 'eth':
-            tx = mute_contract.functions.swapExactETHForTokensSupportingFeeOnTransferTokens(
-                amount_out_min,
-                [Web3.to_checksum_address(from_token_address), Web3.to_checksum_address(to_token_address)],
-                self.address_wallet,
-                await self.get_deadline(),
-                [False, False]
-            ).build_transaction({
-                'value': value,
-                'nonce': self.web3.eth.get_transaction_count(self.address_wallet),
-                'from': self.address_wallet,
-                'maxFeePerGas': 0,
-                'maxPriorityFeePerGas': 0,
-                'gas': 0
-            })
-        elif to_token_symbol.lower() == "eth":
-            tx = mute_contract.functions.swapExactTokensForETHSupportingFeeOnTransferTokens(
-                value,
-                amount_out_min,
-                [Web3.to_checksum_address(from_token_address), Web3.to_checksum_address(to_token_address)],
-                self.address_wallet,
-                await self.get_deadline(),
-                [False, False]
-            ).build_transaction({
-                'value': 0,
-                'nonce': self.web3.eth.get_transaction_count(self.address_wallet),
-                'from': self.address_wallet,
-                'maxFeePerGas': 0,
-                'maxPriorityFeePerGas': 0,
-                'gas': 0
-            })
-        else:
-            tx = mute_contract.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-                value,
-                amount_out_min,
-                [Web3.to_checksum_address(from_token_address), Web3.to_checksum_address(to_token_address)],
-                self.address_wallet,
-                await self.get_deadline(),
-                [False, False]
-            ).build_transaction({
-                'value': 0,
-                'nonce': self.web3.eth.get_transaction_count(self.address_wallet),
-                'from': self.address_wallet,
-                'maxFeePerGas': 0,
-                'maxPriorityFeePerGas': 0,
-                'gas': 0
-            })
+
+        tx = mute_contract.functions.swapExactETHForTokensSupportingFeeOnTransferTokens(
+            amount_out_min,
+            [Web3.to_checksum_address(from_token_address), Web3.to_checksum_address(to_token_address)],
+            self.address_wallet,
+            await self.get_deadline(),
+            [False, False]
+        ).build_transaction({
+            'value': amount_wei,
+            'nonce': self.web3.eth.get_transaction_count(self.web3.to_checksum_address(self.address_wallet)),
+            'from': self.address_wallet,
+            'maxFeePerGas': 0,
+            'maxPriorityFeePerGas': 0,
+            'gas': 0
+        })
 
         tx.update({'maxFeePerGas': self.web3.eth.gas_price})
         tx.update({'maxPriorityFeePerGas': self.web3.eth.gas_price})
+        tx.update({'gas': self.web3.eth.estimate_gas(tx)})
 
-        gas_limit = self.web3.eth.estimate_gas(tx)
-        tx.update({'gas': gas_limit})
         signed_tx = self.web3.eth.account.sign_transaction(tx, self.private_key)
         raw_tx_hash = self.web3.eth.send_raw_transaction(signed_tx.rawTransaction)
         tx_hash = self.web3.to_hex(raw_tx_hash)
@@ -194,7 +145,7 @@ class Swapper:
                         ) -> None:
         from_token_symbol = from_token_symbol.upper()
         to_token_symbol = to_token_symbol.upper()
-        from_token_address, to_token_address = await setup_tokens_addresses(
+        from_token_address, to_token_address = await utils.setup_tokens_addresses(
             token1_symbol=from_token_symbol,
             token2_symbol=to_token_symbol,
             tokens=self.tokens
@@ -202,20 +153,21 @@ class Swapper:
 
         response = await Swapper.send_requests(url=f'{api_url}/approve/spender')
         spender = response['address']
-        from_token_address, from_decimals, to_token_address = await setup_transaction_data(self.web3,
-                                                                                           from_token_address,
-                                                                                           to_token_address)
-        amount = int(amount * 10 ** from_decimals)
+        amount_wei = await utils.amount_to_wei(self.web3, amount, from_token_address)
+        balance = await utils.get_wallet_balance(self.web3, self.address_wallet, from_token_address)
 
-        if from_token_address != '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE':
-            await approve_token(
-                amount,
+        if amount > balance:
+            logger.error(f'Not enough {from_token_symbol} on wallet {self.address_wallet}. Want {amount}, got {balance}')
+            return
+
+        if from_token_symbol.lower() != 'eth':
+            await utils.approve_token(
+                amount_wei,
                 self.private_key,
                 self.chain,
                 from_token_address,
                 from_token_symbol,
                 spender,
-                self.address_wallet,
                 self.web3
             )
 
@@ -224,12 +176,11 @@ class Swapper:
             params={
                 "fromTokenAddress": from_token_address,
                 "toTokenAddress": to_token_address,
-                "amount": amount,
+                "amount": amount_wei,
                 "fromAddress": self.address_wallet,
                 "slippage": self.slippage
             })
-        to_token_decimals = response['toToken']['decimals']
-        to_token_amount = float(response['toTokenAmount']) / 10 ** to_token_decimals
+        to_token_amount = await utils.wei_to_amount(self.web3, int(response['toTokenAmount']), to_token_address)
         tx = response['tx']
         tx['chainId'] = self.chain_id
         tx['nonce'] = self.nonce
@@ -243,7 +194,7 @@ class Swapper:
         tx_hash = self.web3.to_hex(raw_tx_hash)
 
         logger.success(
-            f'Swapped {amount / 10 ** from_decimals} {from_token_symbol} tokens => '
+            f'Swapped {amount} {from_token_symbol} tokens => '
             f'to {to_token_amount} {to_token_symbol} |'
             f'Tx hash: {tx_hash}')
 
@@ -260,13 +211,13 @@ class Swapper:
 
         from_token_symbol = from_token_symbol.upper()
         to_token_symbol = to_token_symbol.upper()
-        from_token_address, to_token_address = await setup_tokens_addresses(
+        from_token_address, to_token_address = await utils.setup_tokens_addresses(
             token1_symbol=from_token_symbol,
             token2_symbol=to_token_symbol,
             tokens=self.tokens
         )
 
-        classic_pool_factory = await load_contract(
+        classic_pool_factory = await utils.get_contract(
             classic_pool_factory_address,
             self.web3,
             classic_pool_factory_abi
@@ -274,12 +225,11 @@ class Swapper:
         pool_address = classic_pool_factory.functions.getPool(Web3.to_checksum_address(from_token_address),
                                                               Web3.to_checksum_address(to_token_address)).call()
 
-        value, token_contract = await create_amount(from_token_symbol, self.web3, from_token_address, amount)
-        value = int(value)
-        balance = await get_wallet_balance(from_token_symbol, self.web3, self.address_wallet, token_contract, 'ERA')
+        amount_wei = await utils.amount_to_wei(self.web3, amount, from_token_address)
+        balance = await utils.get_wallet_balance(self.web3, self.address_wallet, from_token_address)
 
-        if value > balance:
-            logger.error(f'Not enough money for wallet {self.address_wallet}')
+        if amount > balance:
+            logger.error(f'Not enough {from_token_symbol} on wallet {self.address_wallet}. Want {amount}, got {balance}')
             return
 
         if pool_address == "0x0000000000000000000000000000000000000000":
@@ -304,19 +254,20 @@ class Swapper:
             "tokenIn": Web3.to_checksum_address(
                 from_token_address) if from_token_symbol.lower() != 'eth' else Web3.to_checksum_address(
                 native_eth_address),
-            "amountIn": value,
+            "amountIn": amount_wei,
         }]
 
-        router = await load_contract(router_address, self.web3, router_abi)
+        router = await utils.get_contract(router_address, self.web3, router_abi)
         if from_token_symbol.lower() != 'eth':
-            await approve_token(amount=value,
+            await utils.approve_token(
+                                amount=amount_wei,
                                 private_key=self.private_key,
                                 chain='ERA',
                                 from_token_address=from_token_address,
                                 from_token_symbol=from_token_symbol,
                                 spender=router_address,
-                                address_wallet=self.address_wallet,
-                                web3=self.web3)
+                                web3=self.web3
+            )
 
         tx = router.functions.swap(
             paths,
@@ -329,8 +280,8 @@ class Swapper:
             await self.get_deadline()
         ).build_transaction({
             'from': self.address_wallet,
-            'value': value if from_token_symbol.lower() == 'eth' else 0,
-            'nonce': self.web3.eth.get_transaction_count(self.address_wallet),
+            'value': amount_wei if from_token_symbol.lower() == 'eth' else 0,
+            'nonce': self.web3.eth.get_transaction_count(self.web3.to_checksum_address(self.address_wallet)),
             'maxFeePerGas': 0,
             'maxPriorityFeePerGas': 0,
             'gas': 0
@@ -338,9 +289,7 @@ class Swapper:
 
         tx.update({'maxFeePerGas': self.web3.eth.gas_price})
         tx.update({'maxPriorityFeePerGas': self.web3.eth.gas_price})
-
-        gas_limit = self.web3.eth.estimate_gas(tx)
-        tx.update({'gas': gas_limit})
+        tx.update({'gas': self.web3.eth.estimate_gas(tx)})
 
         signed_tx = self.web3.eth.account.sign_transaction(tx, self.private_key)
         raw_tx_hash = self.web3.eth.send_raw_transaction(signed_tx.rawTransaction)
