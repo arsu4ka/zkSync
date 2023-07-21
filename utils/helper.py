@@ -1,5 +1,4 @@
 from web3.contract import Contract
-from eth_typing import Address
 from eth_typing import HexStr
 import asyncio
 import random
@@ -8,6 +7,12 @@ from hexbytes import HexBytes
 from loguru import logger
 from web3 import Web3
 import os
+
+ABI_FOLDER = os.getcwd()
+
+
+def get_wallet_address_from_private_key(web3: Web3, private_key: str) -> str:
+    return web3.eth.account.from_key(private_key).address
 
 
 async def get_nft_id(web3: Web3, tx_hash: str) -> int:
@@ -31,77 +36,51 @@ async def setup_tokens_addresses(token1_symbol: str, token2_symbol: str, tokens:
     return token1_address, token2_address
 
 
-async def setup_transaction_data(web3: Web3, from_token_address: str, to_token_address: str) -> tuple[str, int, str]:
-    if from_token_address == '':
-        from_token_address = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
-        from_decimals = 18
-
-    else:
-        from_decimals = await check_data_token(web3, from_token_address)
-
-    if to_token_address == '':
-        to_token_address = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
-
-    return from_token_address, from_decimals, to_token_address
-
-
-async def check_data_token(web3: Web3, from_token_address: str) -> int:
+async def get_token_decimals(web3: Web3, token_ca: str) -> int:
     try:
-        token_contract = web3.eth.contract(address=web3.to_checksum_address(from_token_address),
-                                           abi=await load_abi('erc20'))
+        token_contract = await get_token_contract(web3, token_ca)
         decimals = token_contract.functions.decimals().call()
-
         return decimals
 
     except Exception as ex:
         logger.error(f'Something went wrong | {ex}')
 
 
-async def create_amount(token: str, web3: Web3, token_address, amount: float) -> tuple[float, Contract | None]:
-    if token.lower() != 'eth':
-        stable_contract = await load_contract(token_address, web3, 'erc20')
-
-        if token.lower() == 'usdc' or token.lower() == 'usdt':
-            amount = amount * 10 ** 6
-            return amount, stable_contract
-        else:
-            amount = web3.to_wei(amount, 'ether') // 10000 * 10000
-            return amount, stable_contract
-
-    else:
-        stable_contract = await load_contract(token_address, web3, 'erc20')
-        amount = amount * 10 ** 18
-
-    return amount, stable_contract
+async def amount_to_wei(web3: Web3, amount: float, token_ca: str) -> int:
+    token_decimals = await get_token_decimals(web3, token_ca)
+    return int(amount * (10 ** token_decimals))
 
 
-async def load_contract(address, web3, abi_name) -> Contract | None:
-    if address is None:
-        return
-
-    address = web3.to_checksum_address(address)
-    return web3.eth.contract(address=address, abi=await load_abi(abi_name))
+async def wei_to_amount(web3: Web3, wei_amount: int, token_ca: str) -> float:
+    token_decimals = await get_token_decimals(web3, token_ca)
+    return wei_amount / (10 ** token_decimals)
 
 
 async def load_abi(name: str) -> str:
-    file_name = os.path.join(os.getcwd(), f'utils/abis/{name}.json')
+    file_name = os.path.join(ABI_FOLDER, f'utils/abis/{name}.json')
     with open(file_name) as f:
         abi: str = json.load(f)
     return abi
 
 
-async def get_wallet_balance(token: str, w3: Web3, address: Address, stable_contract: Contract | None,
-                             from_chain: str) -> float:
-    if token.lower() != 'eth':
-        balance = stable_contract.functions.balanceOf(address).call()
-        return balance
-    else:
-        if from_chain == 'bsc' or from_chain == 'matic':
-            balance = stable_contract.functions.balanceOf(address).call()
-        else:
-            balance = w3.eth.get_balance(address)
+async def get_wallet_balance(web3: Web3, wallet_address: str, token_ca: str) -> float:
+    wallet_address = web3.to_checksum_address(wallet_address)
+    token_ca = web3.to_checksum_address(token_ca)
+    token_contract = await get_token_contract(web3, token_ca)
+    balance_wei = token_contract.functions.balanceOf(wallet_address).call()
+    token_decimals = await get_token_decimals(web3, token_ca)
 
-        return balance
+    return balance_wei / (10 ** token_decimals)
+
+
+async def get_contract(address, web3, abi_name) -> Contract:
+    address = web3.to_checksum_address(address)
+    return web3.eth.contract(address=address, abi=await load_abi(abi_name))
+
+
+async def get_token_contract(web3: Web3, token_ca: str) -> Contract:
+    contract = await get_contract(token_ca, web3, "erc20")
+    return contract
 
 
 async def approve_token(
@@ -111,12 +90,12 @@ async def approve_token(
         from_token_address: str,
         from_token_symbol: str,
         spender: str,
-        address_wallet: Address,
         web3: Web3
         ) -> HexStr:
     try:
         spender = web3.to_checksum_address(spender)
-        contract = await get_contract(web3, from_token_address)
+        address_wallet = get_wallet_address_from_private_key(web3, private_key)
+        contract = await get_token_contract(web3, from_token_address)
         allowance_amount = await check_allowance(web3, from_token_address, address_wallet, spender)
         diff = amount - allowance_amount
 
@@ -128,7 +107,7 @@ async def approve_token(
                 {
                     'chainId': web3.eth.chain_id,
                     'from': address_wallet,
-                    'nonce': web3.eth.get_transaction_count(address_wallet),
+                    'nonce': web3.eth.get_transaction_count(web3.to_checksum_address(address_wallet)),
                     'gasPrice': 0,
                     'gas': 0,
                     'value': 0
@@ -139,9 +118,7 @@ async def approve_token(
             else:
                 gas_price = await add_gas_price(web3)
                 tx['gasPrice'] = gas_price
-
-            gas_limit = await add_gas_limit(web3, tx)
-            tx['gas'] = gas_limit
+            tx['gas'] = await add_gas_limit(web3, tx)
 
             signed_tx = web3.eth.account.sign_transaction(tx, private_key=private_key)
             raw_tx_hash = web3.eth.send_raw_transaction(signed_tx.rawTransaction)
@@ -159,10 +136,9 @@ async def approve_token(
         logger.error(f'Something went wrong | {ex}')
 
 
-async def check_allowance(web3: Web3, from_token_address: str, address_wallet: Address, spender: str) -> float:
+async def check_allowance(web3: Web3, from_token_address: str, address_wallet: str, spender: str) -> float:
     try:
-        contract = web3.eth.contract(address=web3.to_checksum_address(from_token_address),
-                                     abi=await load_abi('erc20'))
+        contract = await get_token_contract(web3, from_token_address)
         amount_approved = contract.functions.allowance(address_wallet, spender).call()
         return amount_approved
 
@@ -184,8 +160,3 @@ async def add_gas_limit(web3: Web3, tx: dict) -> int:
     gas_limit = web3.eth.estimate_gas(tx)
 
     return gas_limit
-
-
-async def get_contract(web3: Web3, from_token_address: str) -> Contract:
-    return web3.eth.contract(address=web3.to_checksum_address(from_token_address),
-                             abi=await load_abi('erc20'))
