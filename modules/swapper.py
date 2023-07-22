@@ -1,3 +1,5 @@
+import web3
+import asyncio
 from aiohttp import ClientSession
 from loguru import logger
 from web3 import Web3
@@ -11,7 +13,7 @@ class Swapper:
                  private_key: str,
                  rpc_chain: str,
                  chain: dict[str, str],
-                 slippage: int,
+                 slippage: float,
                  deadline: int,
                  tokens: dict[str, str]
                  ) -> None:
@@ -55,15 +57,26 @@ class Swapper:
             to_token_amount_wei = await utils.amount_to_wei(self.web3, to_token_amount, to_token_address)
             return await self.calc_slippage(int(to_token_amount_wei))
         except KeyError:
-            return 0
+            c1 = from_token_symbol.lower() == "usdc" or from_token_symbol.lower() == "usdt"
+            c2 = to_token_symbol.lower() == "usdc" or from_token_symbol.lower() == "usdt"
+            if c1 and c2:
+                return await self.calc_slippage(await utils.amount_to_wei(self.web3, from_token_amount, to_token_address))
+            else:
+                return 0
 
     @staticmethod
-    async def send_requests(url: str, params=None) -> json:
+    async def send_requests(url: str, params=None, i=1) -> json:
+        if i > 4:
+            return None
         if params is None:
             params = {}
         async with ClientSession() as session:
             response = await session.get(url, params=params)
-            response_text = await response.json()
+        if not response.ok:
+            i += 1
+            await asyncio.sleep(5)
+            return await Swapper.send_requests(url, params, i)
+        response_text = await response.json()
         return response_text
 
     async def mute_swap(
@@ -141,7 +154,8 @@ class Swapper:
                         amount: float,
                         from_token_symbol: str,
                         to_token_symbol: str,
-                        api_url: str
+                        api_url: str,
+                        nonce: int
                         ) -> None:
         from_token_symbol = from_token_symbol.upper()
         to_token_symbol = to_token_symbol.upper()
@@ -180,10 +194,11 @@ class Swapper:
                 "fromAddress": self.address_wallet,
                 "slippage": self.slippage
             })
+
         to_token_amount = await utils.wei_to_amount(self.web3, int(response['toTokenAmount']), to_token_address)
         tx = response['tx']
         tx['chainId'] = self.chain_id
-        tx['nonce'] = self.nonce
+        tx['nonce'] = nonce
         tx['to'] = Web3.to_checksum_address(tx['to'])
         tx['gasPrice'] = int(tx['gasPrice'])
         tx['gas'] = int(int(tx['gas']))
@@ -195,7 +210,8 @@ class Swapper:
 
         logger.success(
             f'Swapped {amount} {from_token_symbol} tokens => '
-            f'to {to_token_amount} {to_token_symbol} |'
+            f'to {to_token_amount} {to_token_symbol} | '
+            f"{self.address_wallet} | "
             f'Tx hash: {tx_hash}')
 
     async def sync_swap(
