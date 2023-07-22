@@ -65,17 +65,11 @@ class Swapper:
                 return 0
 
     @staticmethod
-    async def send_requests(url: str, params=None, i=1) -> json:
-        if i > 4:
-            return None
+    async def send_requests(url: str, params=None) -> json:
         if params is None:
             params = {}
         async with ClientSession() as session:
             response = await session.get(url, params=params)
-        if not response.ok:
-            i += 1
-            await asyncio.sleep(5)
-            return await Swapper.send_requests(url, params, i)
         response_text = await response.json()
         return response_text
 
@@ -155,7 +149,6 @@ class Swapper:
                         from_token_symbol: str,
                         to_token_symbol: str,
                         api_url: str,
-                        nonce: int
                         ) -> None:
         from_token_symbol = from_token_symbol.upper()
         to_token_symbol = to_token_symbol.upper()
@@ -198,7 +191,7 @@ class Swapper:
         to_token_amount = await utils.wei_to_amount(self.web3, int(response['toTokenAmount']), to_token_address)
         tx = response['tx']
         tx['chainId'] = self.chain_id
-        tx['nonce'] = nonce
+        tx['nonce'] = self.web3.eth.get_transaction_count(Web3.to_checksum_address(self.address_wallet))
         tx['to'] = Web3.to_checksum_address(tx['to'])
         tx['gasPrice'] = int(tx['gasPrice'])
         tx['gas'] = int(int(tx['gas']))
@@ -313,3 +306,33 @@ class Swapper:
         logger.success(
             f'Swapped {amount} {from_token_symbol} tokens => {to_token_symbol} | '
             f'TX: https://explorer.zksync.io/tx/{tx_hash}')
+
+    async def transfer_to_sender_wallet(self, token_ca):
+        nonce = self.web3.eth.get_transaction_count(Web3.to_checksum_address(self.address_wallet))
+        usdc_contract = await utils.get_token_contract(self.web3, token_ca)
+        usdc_balance = await utils.get_wallet_balance(self.web3, self.address_wallet, token_ca)
+        usdc_balance_wei = await utils.amount_to_wei(self.web3, usdc_balance, token_ca)
+        tx = usdc_contract.functions.transfer(*(
+            Web3.to_checksum_address(self.address_wallet),
+            usdc_balance_wei
+        )).build_transaction({
+            'chainId': self.chain_id,
+            'from': self.address_wallet,
+            'nonce': nonce,
+            'maxFeePerGas': 0,
+            'maxPriorityFeePerGas': 0,
+            'gas': 0
+        })
+
+        tx.update({'maxFeePerGas': self.web3.eth.gas_price})
+        tx.update({'maxPriorityFeePerGas': self.web3.eth.gas_price})
+        tx.update({'gas': self.web3.eth.estimate_gas(tx)})
+
+        signed_tx = self.web3.eth.account.sign_transaction(tx, self.private_key)
+        raw_tx_hash = self.web3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        tx_hash = self.web3.to_hex(raw_tx_hash)
+        logger.success(
+            f'Transferred to itself {usdc_balance} USDC tokens | '
+            f'{self.address_wallet} | '
+            f'TX: https://explorer.zksync.io/tx/{tx_hash}'
+        )
