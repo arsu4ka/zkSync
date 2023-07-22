@@ -161,5 +161,6 @@ cython_debug/
 
 test.py
 test.py
-config.py
+routes/config.py
 main.py
+*.txt
