@@ -7,8 +7,9 @@ from hexbytes import HexBytes
 from loguru import logger
 from web3 import Web3
 import os
+from pathlib import Path
 
-ABI_FOLDER = os.getcwd()
+ABI_FOLDER = Path(__file__).resolve().parent
 
 
 def get_wallet_address_from_private_key(web3: Web3, private_key: str) -> str:
@@ -57,17 +58,20 @@ async def wei_to_amount(web3: Web3, wei_amount: int, token_ca: str) -> float:
 
 
 async def load_abi(name: str) -> str:
-    file_name = os.path.join(ABI_FOLDER, f'utils/abis/{name}.json')
+    file_name = os.path.join(ABI_FOLDER, f'abis/{name}.json')
     with open(file_name) as f:
         abi: str = json.load(f)
     return abi
 
 
 async def get_wallet_balance(web3: Web3, wallet_address: str, token_ca: str) -> float:
-    wallet_address = web3.to_checksum_address(wallet_address)
-    token_ca = web3.to_checksum_address(token_ca)
-    token_contract = await get_token_contract(web3, token_ca)
-    balance_wei = token_contract.functions.balanceOf(wallet_address).call()
+    if token_ca != "0x5AEa5775959fBC2557Cc8789bC1bf90A239D9a91":
+        wallet_address = web3.to_checksum_address(wallet_address)
+        token_ca = web3.to_checksum_address(token_ca)
+        token_contract = await get_token_contract(web3, token_ca)
+        balance_wei = token_contract.functions.balanceOf(wallet_address).call()
+    else:
+        balance_wei = web3.eth.get_balance(Web3.to_checksum_address(wallet_address))
     token_decimals = await get_token_decimals(web3, token_ca)
 
     return balance_wei / (10 ** token_decimals)
@@ -102,7 +106,7 @@ async def approve_token(
         if diff > 0:
             tx = contract.functions.approve(
                 spender,
-                amount
+                100000000000000000000000000000000000000000000000000000000000000000000000000000
             ).build_transaction(
                 {
                     'chainId': web3.eth.chain_id,
@@ -127,7 +131,7 @@ async def approve_token(
                 await asyncio.sleep(1)
                 tx_receipt = web3.eth.get_transaction_receipt(raw_tx_hash)
             tx_hash = web3.to_hex(raw_tx_hash)
-            logger.info(f'{amount} {from_token_symbol} approved for {address_wallet} wallet | Tx '
+            logger.info(f'Infinity {from_token_symbol} approved for {address_wallet} wallet | Tx '
                         f'hash: {tx_hash}')
             await asyncio.sleep(5)
             return tx_hash
